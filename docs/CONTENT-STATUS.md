@@ -429,3 +429,30 @@ specimen). Sentence-level edits, verbatim ledger:
 | /about closer | …the fifth spot, the Ferry Landing… | …the fifth location, the Ferry Landing… | sweep (00:14:13) |
 
 None of these touch Kathy's narrative prose or any audio-narrated text.
+
+## 2026-10-21 — Ferry Landing map-data correction (Wil)
+
+Requested by Wil (designer), 21 Oct 2026. Map data only; **no narrative prose
+and no audio changed.**
+
+- **Stop 4 coordinates** (`src/content/chapters/ferry.json`): `[-73.698778, 42.719271]`
+  (far south, the end of Madison Street) → `[-73.69465, 42.73046]` (riverfront by
+  Front Street, just north of Congress Street). The Ferry is no longer the
+  southernmost or westernmost stop; it sits at the latitude of stops 2 and 5,
+  about 160 m west of them.
+- **Address line** (`map.address`): `Riverfront at the end of Madison Street` →
+  `Riverfront at Front Street`. Shown on /map and on the
+  Mansion page's Where-to-next card. Mapbox reverse-geocodes the point to
+  189-191 River Street; wording approved by Wil on 21 Oct 2026.
+- **Route regenerated** (`node scripts/build-route.mjs` → `src/data/route.json`):
+
+| | points | distance | walking time |
+|---|---|---|---|
+| before | 125 | 3,979 m (2.47 mi) | 2,847 s (47 min) |
+| after | 111 | 2,486 m (1.54 mi) | 1,790 s (30 min) |
+
+  /map and /about compute distance and time from `route.json`, so both now read
+  "1.5 miles · about 30 minutes".
+- **Superseded:** the earlier canon entry (`docs/v4/NAMING-CANON.md` C29, Kathy's
+  "river front at the end of Madison Street" plaque note) no longer governs the
+  map pin or address line; see the 2026-10-21 addendum there.

@@ -544,3 +544,14 @@ The map's stop cards carry an optional authored two-line title, `name.card`
 Baltimore’s Barbershop wrap naturally and never cross the card's arrow rule).
 Wil, 2026-08-15 review: "Holeur's / Fashionable Bakery" and "Commissioner's /
 Office" on two lines. `map.astro` resolves `cardTitle = name.card ?? name.canonical`.
+
+## Map-pin addendum (2026-10-21) — SUPERSEDES C29 and the Ferry address in A.1 / D.1
+
+The Ferry Landing's map pin and `map.address` were corrected at Wil's direction
+(21 Oct 2026, a map-data correction; story prose untouched). The pin moved from
+the end of Madison Street to the riverfront by Front Street, and `map.address`
+(`ferry.json`) is now `Riverfront at Front Street`. The
+`Riverfront at the end of Madison Street` string cited at A.1 (`ferry.json:13`),
+C29 and D.1 row 4 is therefore SUPERSEDED for the map pin and address line; the
+rows above are left as the record of what Kathy's note said. Details and the
+regenerated route are in `docs/CONTENT-STATUS.md` (2026-10-21).

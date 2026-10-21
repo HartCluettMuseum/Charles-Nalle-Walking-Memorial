@@ -16,10 +16,10 @@
   "plaque": false,
   "map": {
     "coordinates": [
-      -73.698778,
-      42.719271
+      -73.69465,
+      42.73046
     ],
-    "address": "Riverfront at the end of Madison Street"
+    "address": "Riverfront at Front Street"
   },
   "palette": {
     "surface": "#0e1517",
@@ -143,7 +143,7 @@
     "slug": "barbershop"
   },
   "pinOffset": [
-    0,
-    -50
+    70,
+    62
   ]
 }

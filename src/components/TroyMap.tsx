@@ -202,7 +202,7 @@ function markerHtml(stop: Stop, active: boolean): string {
  * the map was factually wrong.
  *
  * `src/data/route.json` is Mapbox Directions walking geometry for the five
- * stops in plaque order — 125 points, 3,979m, about 47 minutes. Regenerate it
+ * stops in plaque order — 111 points, 2,486m, about 30 minutes. Regenerate it
  * with `node scripts/build-route.mjs`.
  */
 const routeLine = ROUTE.coordinates as [number, number][];
@@ -1172,7 +1172,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
     // v7 M1: the GeolocateControl is gone (Wil) — bottom-left is attribution alone.
     // Item 7: the ScaleControl is gone — it read as an "elevation counter"
     // ticking through the flights. The walk's true size is stated in type
-    // under the map ("2.5 miles · about 45 minutes on foot").
+    // under the map ("1.5 miles · about 30 minutes on foot").
 
     map.on("load", () => {
       // Markers
