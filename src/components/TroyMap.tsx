@@ -249,6 +249,30 @@ function markerHtml(stop: Stop, active: boolean): string {
  * with `node scripts/build-route.mjs`.
  */
 const routeLine = ROUTE.coordinates as [number, number][];
+/* 21 Oct 2026 (Wil, from his iPhone): the phone overview must never cut the
+   path — the loop west of the Ferry reached further left than any pill, so a
+   frame that centred only the pills ran it to the screen's edge. The phone
+   search now fits and centres the pills AND the route together. Perspective
+   maps the route's convex hull onto the hull of its projection, so the hull's
+   corners (a dozen-odd points, not 111) give the projected extremes exactly. */
+const ROUTE_HULL: [number, number][] = (() => {
+  const pts = [...routeLine].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: [number, number][] = [];
+  for (const p of pts.reverse()) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+})();
+/* Half the drawn route's width at the phone overview zoom: the line's edge,
+   not its centreline, is what must stay inside the margin. */
+const ROUTE_EDGE = 3;
 
 export default function TroyMap({ stops, baseUrl }: Props) {
   const hasToken = Boolean(TOKEN);
@@ -815,6 +839,13 @@ export default function TroyMap({ stops, baseUrl }: Props) {
        centroid, pins 2 and 5 off the top (his screenshot 3). T is 0 wherever
        there are no bars, where this reduces to the old arithmetic exactly. */
     const safe = { x0: inset, y0: t + inset + 56, x1: w - inset, y1: t + h - (insetB + 12 + 52 + 12) }; // 52 = .btn min-height (V8-002)
+    const pillBox = (st: Stop): { w: number; h: number } | null => {
+      const el = markersRef.current
+        .find((m) => m.stop === st)
+        ?.marker.getElement()
+        .querySelector<HTMLElement>('div[style*="translate(-50%,-50%)"]');
+      return el && el.offsetWidth > 0 ? { w: el.offsetWidth, h: el.offsetHeight } : null;
+    };
     const labelRect = (pt: { x: number; y: number }, st: Stop) => {
       if (narrow) {
         /* v8 V8-207: phones carry pills now — model the pill's real box
@@ -822,9 +853,17 @@ export default function TroyMap({ stops, baseUrl }: Props) {
            offset, so the camera search sees what the visitor sees. */
         const pdx = Math.round((st.pinOffset?.[0] ?? 0) * 0.62);
         const pdy = Math.round((st.pinOffset?.[1] ?? -46) * 0.62) || -34;
-        const wpxN = 36 + 7.2 * (st.pin ?? st.label).length;
+        /* 21 Oct 2026: portrait phones read the pill's RENDERED box — the
+           7.2px/ch model ran ~8px wide per pill on most names, so a fit that
+           now also carries the route backed out a whole zoom step it did not
+           need. The markers exist by the time any overview camera is chosen
+           (they are made first in the same load handler); the model stays as
+           the fallback, and landscape phones keep it unchanged. */
+        const real = short ? null : pillBox(st);
+        const wpxN = real?.w ?? 36 + 7.2 * (st.pin ?? st.label).length;
+        const hhN = real ? real.h / 2 : 14;
         const cxN = pt.x + pdx, cyN = pt.y + pdy;
-        return { x0: cxN - wpxN / 2, y0: cyN - 14, x1: cxN + wpxN / 2, y1: cyN + 14, cx: cxN, cy: cyN };
+        return { x0: cxN - wpxN / 2, y0: cyN - hhN, x1: cxN + wpxN / 2, y1: cyN + hhN, cx: cxN, cy: cyN };
       }
       const [dx, dy] = st.pinOffset ?? [0, -46];
       const wpx = 26 + 9.4 * st.label.length; // measured: "2 COMMISSIONER'S OFFICE" ≈ 241px
@@ -897,6 +936,20 @@ export default function TroyMap({ stops, baseUrl }: Props) {
       const phonePitches = short ? PITCHES : PITCHES_WIDE;
       const phoneBearing = short ? OVERVIEW_BEARING : PHONE_OVERVIEW_BEARING;
       const zoomMax = short ? OVERVIEW.zoom : PHONE_ZOOM_MAX;
+      /* 21 Oct 2026: portrait phones fit and centre the pills AND the route
+         (see ROUTE_HULL). Landscape phones keep the pills-only fit. */
+      const withRoute = !short;
+      const groupBox = (rs: { x0: number; y0: number; x1: number; y1: number }[]) => {
+        let x0 = Math.min(...rs.map((r) => r.x0)), x1 = Math.max(...rs.map((r) => r.x1));
+        let y0 = Math.min(...rs.map((r) => r.y0)), y1 = Math.max(...rs.map((r) => r.y1));
+        if (withRoute)
+          for (const ll of ROUTE_HULL) {
+            const q = map.project(ll);
+            x0 = Math.min(x0, q.x - ROUTE_EDGE); x1 = Math.max(x1, q.x + ROUTE_EDGE);
+            y0 = Math.min(y0, q.y - ROUTE_EDGE); y1 = Math.max(y1, q.y + ROUTE_EDGE);
+          }
+        return { x0, x1, y0, y1 };
+      };
       outerN: for (const pitch of phonePitches) {
         for (let zoom = zoomMax; zoom >= ZOOM_FLOOR; zoom -= 0.05) {
           let center: [number, number] = centroid;
@@ -906,9 +959,14 @@ export default function TroyMap({ stops, baseUrl }: Props) {
             /* v8 V8-207: phones carry PILLS now — fit their real rects, not
                the old ±12 dot boxes. */
             const rs = stops.map((st) => labelRect(map.project(st.coordinates), st));
-            const x0 = Math.min(...rs.map((r) => r.x0)), x1 = Math.max(...rs.map((r) => r.x1));
-            const y0 = Math.min(...rs.map((r) => r.y0)), y1 = Math.max(...rs.map((r) => r.y1));
-            if (x1 - x0 > safe.x1 - safe.x0 || y1 - y0 > safe.y1 - safe.y0) break;
+            const { x0, x1, y0, y1 } = groupBox(rs);
+            /* 21 Oct 2026: with the route in the group, size is judged only
+               after re-centring. Under pitch 60 ground geometry drawn lower on
+               the screen is larger, so at the starting centroid the route read
+               up to 25px wider than it does once centred, and zooms that fit
+               were rejected. The `inside` test after convergence decides.
+               Pills are fixed-size boxes: landscape phones keep the early exit. */
+            if (!withRoute && (x1 - x0 > safe.x1 - safe.x0 || y1 - y0 > safe.y1 - safe.y0)) break;
             const shift = { x: (safe.x0 + safe.x1) / 2 - (x0 + x1) / 2, y: (safe.y0 + safe.y1) / 2 - (y0 + y1) / 2 };
             if (Math.abs(shift.x) < 1 && Math.abs(shift.y) < 1) { ok = true; break; }
             /* v18: the PADDED centre, (w/2, T + h/2) in container pixels, is
@@ -919,7 +977,10 @@ export default function TroyMap({ stops, baseUrl }: Props) {
           if (!ok) continue;
           map.jumpTo({ center, zoom, pitch, bearing: phoneBearing });
           const rs = stops.map((st) => labelRect(map.project(st.coordinates), st));
-          const inside = rs.every((r) => r.x0 >= safe.x0 && r.y0 >= safe.y0 && r.x1 <= safe.x1 && r.y1 <= safe.y1);
+          const g = groupBox(rs);
+          const inside =
+            rs.every((r) => r.x0 >= safe.x0 && r.y0 >= safe.y0 && r.x1 <= safe.x1 && r.y1 <= safe.y1) &&
+            g.x0 >= safe.x0 && g.y0 >= safe.y0 && g.x1 <= safe.x1 && g.y1 <= safe.y1;
           let apart = true;
           for (let i = 0; i < rs.length && apart; i++)
             for (let j = i + 1; j < rs.length; j++) {
@@ -927,8 +988,8 @@ export default function TroyMap({ stops, baseUrl }: Props) {
               if (Math.min(a.x1, c.x1) - Math.max(a.x0, c.x0) > 0 && Math.min(a.y1, c.y1) - Math.max(a.y0, c.y0) > 0) { apart = false; break; }
             }
           if (inside && apart) {
-            const bx = (Math.min(...rs.map((r) => r.x0)) + Math.max(...rs.map((r) => r.x1))) / 2;
-            const by = (Math.min(...rs.map((r) => r.y0)) + Math.max(...rs.map((r) => r.y1))) / 2;
+            const bx = (g.x0 + g.x1) / 2;
+            const by = (g.y0 + g.y1) / 2;
             const centred =
               Math.abs(bx - (safe.x0 + safe.x1) / 2) <= CENTRE_TOL && Math.abs(by - (safe.y0 + safe.y1) / 2) <= CENTRE_TOL;
             const cam = { center, zoom: +zoom.toFixed(2), pitch, bearing: phoneBearing };
@@ -1258,10 +1319,11 @@ export default function TroyMap({ stops, baseUrl }: Props) {
        the (i) moves beside the ☰ in the bottom-right pocket there.
        v14 E2: the ☰ is top-right on /map as everywhere else; the phone (i)
        keeps this corner at the plain inset (the +84px pocket is gone). */
-    map.addControl(
-      new mapboxgl.AttributionControl({ compact: true }),
-      window.innerWidth < 640 || window.innerHeight < 560 ? "bottom-right" : "bottom-left",
-    );
+    /* 21 Oct 2026 (Wil): tablet and desktop take the phone arrangement — the
+       (i) in the bottom-right corner, right-aligned with the ☰ above it (both
+       sit on --ui-inset) and on the Mapbox logo's row, instead of stacked
+       above the logo bottom-left. One corner rule at every width. */
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
     mapRef.current = map;
     /* A pointer that changes kind (tablet + trackpad, hybrids) re-decides. */
     const finePointer = window.matchMedia("(pointer: fine)");
@@ -2169,8 +2231,13 @@ export default function TroyMap({ stops, baseUrl }: Props) {
              already tracks that case. A landscape
              tablet (1024×768) has only that 12px band to spare, so the doors'
              row placement (juror pass 10 P2) now starts at `lg:` (1024) rather
-             than `xl:` (1280): there is the same room left of the door. */
-          className="pointer-events-none absolute bottom-[calc(var(--map-lane)+68px)] left-1/2 z-20 w-max max-w-[86vw] -translate-x-1/2 lg:bottom-[calc(var(--ui-inset-b)+16px)] lg:left-[calc(var(--ui-inset)+36px)] lg:translate-x-0"
+             than `xl:` (1280): there is the same room left of the door.
+             Later the same day the (i) moved to the bottom-RIGHT at every
+             width (Wil), so from `lg:` the chip takes the slot it left: on the
+             corner inset, 8px above the Mapbox logo (the logo's box tops out
+             23px + its own −4px offset above the lane: 19 + 8 = 27). At +16px
+             beside the old (i) it had overlapped the logo's top by 3px. */
+          className="pointer-events-none absolute bottom-[calc(var(--map-lane)+68px)] left-1/2 z-20 w-max max-w-[86vw] -translate-x-1/2 lg:bottom-[calc(var(--ui-inset-b)+27px)] lg:left-[var(--ui-inset)] lg:translate-x-0"
           style={hintBottom != null ? { bottom: hintBottom } : undefined}
           aria-hidden="true"
         >
