@@ -555,6 +555,9 @@ export default function TroyMap({ stops, baseUrl }: Props) {
   walkRef.current = walk;
   const tourRun = useRef(0);
   const [hintOpen, setHintOpen] = useState(false);
+  /** 21 Oct 2026: the hint chip's measured bottom offset (px from the UI
+   *  layer's edge) below `lg:`; null = the stylesheet's fallback. */
+  const [hintBottom, setHintBottom] = useState<number | null>(null);
   const flyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** v7 X1: set once the curtain starts covering — every camera/route
    *  animation checks it and stands down so page A is still under the cover. */
@@ -667,6 +670,62 @@ export default function TroyMap({ stops, baseUrl }: Props) {
     io.observe(el);
     return () => io.disconnect();
   }, []);
+
+  /**
+   * 21 Oct 2026 (Wil, three rounds from his iPhone after the Ferry move): the
+   * "Drag to explore · Tap a stop" chip sits MIDWAY between the lowest label
+   * pill and `Take the walk`, on every width below `lg:` (1024). A static
+   * offset cannot do that — the lowest pill is wherever the label-fit camera
+   * puts it, which changes with the viewport — so the chip is placed from the
+   * same probe the fit uses: jump to the chosen camera, project every label
+   * (the same rect model as `labelRect` below), jump back in the same task
+   * (Mapbox paints on rAF; no frame shows it). Returns the chip's `bottom` in
+   * px from the UI layer's edge. The chip never comes closer than 16px to the
+   * door (8px read as cramped; Wil's first note), and when there is not room
+   * for 16px on each side it keeps the 16px by the door and lets the pill
+   * side go — his call: "if it has to be closer to something, the button".
+   * One lane (16px on phones) and one button-height (52px) were both tried
+   * and rejected; the first covered nothing but felt tight, the second sat
+   * too high on phones. From `lg:` up the chip rides in the doors' row and
+   * this returns null.
+   */
+  const HINT_CHIP_H = 32; // t-meta 12px × 1.35 + 2 × 8px padding
+  const HINT_MIN_GAP = 16;
+  const hintBottomFor = useCallback(
+    (cam: typeof OVERVIEW): number | null => {
+      const map = mapRef.current;
+      if (!map || window.innerWidth >= 1024) return null;
+      // A jumpTo would cancel a flight in progress: probe only on a resting map
+      // (the caller runs this BEFORE the intro ease starts).
+      if (map.isEasing() || map.isMoving()) return null;
+      const w = window.innerWidth;
+      const h = uiHeight();
+      const t = mapT();
+      const narrow = w < 640 || h < 560;
+      const saved = { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
+      map.jumpTo(cam);
+      let lowest = -Infinity;
+      stops.forEach((st) => {
+        const pt = map.project(st.coordinates);
+        if (narrow) {
+          const pdy = Math.round((st.pinOffset?.[1] ?? -46) * 0.62) || -34;
+          lowest = Math.max(lowest, pt.y + pdy + 14);
+        } else {
+          const [, dy] = st.pinOffset ?? [0, -46];
+          lowest = Math.max(lowest, pt.y + dy + 20);
+        }
+      });
+      map.jumpTo(saved);
+      if (!Number.isFinite(lowest)) return null;
+      const doorTop = mapLane() + 52; // the .btn min-height (V8-002), from the UI edge
+      const pillBottom = h - (lowest - t); // container px → px from the UI edge
+      const room = pillBottom - doorTop - HINT_CHIP_H;
+      const gap = Math.max(HINT_MIN_GAP, Math.round(room / 2));
+      return doorTop + gap;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stops],
+  );
 
   /**
    * v7 M2 — the overview camera. `cameraForBounds` honours `pitch` in
@@ -1334,6 +1393,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
         setTimeout(() => requestAnimationFrame(draw), 500);
       }
 
+      let hintBottomPlan: number | null = null;
       if (arriving) {
         // QR / deep-link cinematic arrival (M3): 5s ease onto the stop.
         // Skippable like every flight — any touch cuts to the destination.
@@ -1356,6 +1416,9 @@ export default function TroyMap({ stops, baseUrl }: Props) {
           } as Parameters<MapboxGL.Map["easeTo"]>[0]);
       } else {
         const target = overviewCamera();
+        // 21 Oct 2026: the hint chip's resting height is measured here, on the
+        // still map, before the flight begins (see hintBottomFor).
+        hintBottomPlan = hintBottomFor(target);
         if (reduced) {
           map.jumpTo(target);
         } else {
@@ -1397,6 +1460,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
       // gesture (persistent handlers — the flight-skip `once` handlers must
       // not be its only exit) or after 7s.
       if (!sessionStorage.getItem("cnwm-map-hint") && !arriving) {
+        setHintBottom(hintBottomPlan);
         setHintOpen(true);
         const bye = () => {
           setHintOpen(false);
@@ -2020,8 +2084,24 @@ export default function TroyMap({ stops, baseUrl }: Props) {
              chip used raw Tailwind `bottom-*` while the `xl:` branch already
              routed through `--ui-inset` (20px at 360–640, 40px at 768–1024).
              Same position wherever the inset is 0; lifted clear of the home
-             indicator where it is not. */
-          className="pointer-events-none absolute bottom-[calc(var(--ui-inset-b)+156px)] left-1/2 z-20 w-max max-w-[86vw] -translate-x-1/2 sm:bottom-[calc(var(--ui-inset-b)+108px)] [@media(max-height:560px)]:bottom-[calc(var(--ui-inset-b)+60px)] xl:bottom-[calc(var(--ui-inset-b)+16px)] xl:left-[calc(var(--ui-inset)+36px)] xl:translate-x-0"
+             indicator where it is not.
+
+             21 Oct 2026 (Wil, from his iPhone after the Ferry move): the chip
+             sat 156px (phones) / 108px (tablets) above the bottom lane, inside
+             the band the label-fit camera allows pills to occupy (down to
+             lane + 76), and covered the Mansion pill, now the lowest, on first
+             load. Below `lg:` it is now placed by `hintBottomFor` — midway
+             between the lowest pill and `Take the walk`, never closer than
+             16px to the door (see that function's comment for the rounds that
+             led here). The class below is only the no-measurement fallback:
+             `--map-lane` (the door's own bottom offset) + 52 (the .btn
+             min-height) + 16. The short-screen variant went with it: the lane
+             already tracks that case. A landscape
+             tablet (1024×768) has only that 12px band to spare, so the doors'
+             row placement (juror pass 10 P2) now starts at `lg:` (1024) rather
+             than `xl:` (1280): there is the same room left of the door. */
+          className="pointer-events-none absolute bottom-[calc(var(--map-lane)+68px)] left-1/2 z-20 w-max max-w-[86vw] -translate-x-1/2 lg:bottom-[calc(var(--ui-inset-b)+16px)] lg:left-[calc(var(--ui-inset)+36px)] lg:translate-x-0"
+          style={hintBottom != null ? { bottom: hintBottom } : undefined}
           aria-hidden="true"
         >
           <div
