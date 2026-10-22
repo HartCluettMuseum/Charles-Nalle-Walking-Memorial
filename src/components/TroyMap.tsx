@@ -40,8 +40,44 @@ const OVERVIEW = {
   pitch: 33,
   /* v8 V8-206 (Wil, 00:11:23): a touch more rotation — 10 read straight-on
      at the overview pitch. The label-fit search re-validates every chip. */
+  /* 21 Oct 2026 (Wil): the overview FRAME now turns to OVERVIEW_BEARING
+     below; 16 stays here for the deep-link arrival flight and its cut. */
   bearing: 16,
 };
+/* 21 Oct 2026 (Wil, from his iPhone photo): "rotate the map clockwise so the
+   north–south streets stand upright". 9.2 is 2nd Street's own heading, set by
+   measurement, not by eye: the route's 2nd St leg (State St → Washington St,
+   the leg that ends at the Gilbert Mansion, route.json) runs from
+   [-73.693087, 42.724288] to [-73.691797, 42.730132], which in Web Mercator is
+   atan(0.00129 / (0.005844 · sec 42.727°)) = 9.21° east of north. Under pitch a
+   ground line projects vertical only when it is parallel to the view AND runs
+   through the principal point, so the wide fit also slides the frame
+   sideways onto that line (SECOND_ST below); phones keep their own label
+   centring. One bearing for every breakpoint — the fit, the intro flight, the
+   reduced-motion cut, Back to overview. At 16 the streets leaned up-left. */
+const OVERVIEW_BEARING = 9.2;
+/* 21 Oct 2026 (Wil's iPhone photo is the phone spec): portrait phones load
+   north-up. In his photo the 2nd St leg leans up-right at ~0.3 across per
+   unit down, which is bearing 0 at pitch 60 (measured against renders at
+   0, 5 and 9.2); it also lets the five pills fill more of a narrow frame.
+   Desktop and tablet keep OVERVIEW_BEARING (2nd St upright through the door,
+   his separate desktop brief); landscape phones keep it too, as tested. */
+const PHONE_OVERVIEW_BEARING = 0;
+/* 21 Oct 2026 (Wil, desktop notes two and three): rotation only, no pitch or
+   zoom change, until 3RD Street runs through Take the walk ("closer" after a
+   first turn to 5, which put 2nd St through the button's left side and 3rd St
+   at its right edge). Desktop (1280 and up) only. Measured where 3rd St's
+   rendered centreline crosses the button's vertical middle, as a fraction of
+   the button's width: at -1 it is 0.61 / 0.53 / 0.38 at 1280 / 1440 / 1920 —
+   the smallest worst-case distance from centre across the three (-1.5 centres
+   1440 exactly but drops 1920 to 0.34). The fit still slides the frame onto
+   the 2nd St line (SECOND_ST); the rotation carries 3rd St to the door. */
+const DESKTOP_OVERVIEW_BEARING = -1;
+/* 21 Oct 2026: the 2nd St leg's ends (route.json vertices) — see above. */
+const SECOND_ST: [[number, number], [number, number]] = [
+  [-73.691797, 42.730132],
+  [-73.693087, 42.724288],
+];
 const MAX_BOUNDS: [[number, number], [number, number]] = [
   [-73.73, 42.7],
   [-73.65, 42.75],
@@ -62,7 +98,14 @@ const PITCHES = [52, 48, 44, 40, 36, 33];
    So offer it more, on the WIDE branch only: 60 is Mapbox's own default
    maximum, and the fit test decides. Phones and landscape phones run the
    narrow branch below and never see this list. */
+/* 21 Oct 2026 (Wil, from his iPhone photo): phones now get this list too —
+   "pitch about 60, zoom a touch higher". Portrait phones search it from
+   PHONE_ZOOM_MAX down; landscape phones (short) keep PITCHES, see below. */
 const PITCHES_WIDE = [60, 58, 56, 54, ...PITCHES];
+/* 21 Oct 2026: the phone search's zoom ceiling (was OVERVIEW.zoom, 15.25 —
+   the pins sat small in the frame). The search still takes the highest zoom
+   at which every pill fits, so this only lets a roomy phone come closer. */
+const PHONE_ZOOM_MAX = 15.6;
 const expoOut = (t: number) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -847,12 +890,19 @@ export default function TroyMap({ stops, baseUrl }: Props) {
         stops.reduce((a, st) => a + st.coordinates[1], 0) / stops.length,
       ];
       let fitOnly: typeof OVERVIEW | null = null;
-      outerN: for (const pitch of PITCHES) {
-        for (let zoom = OVERVIEW.zoom; zoom >= ZOOM_FLOOR; zoom -= 0.05) {
+      /* 21 Oct 2026 (Wil): portrait phones search the steep list from a higher
+         ceiling (PITCHES_WIDE, PHONE_ZOOM_MAX). Landscape phones keep what they
+         were tuned to (v12 item 16): their safe band is ~218px tall, and the
+         new bearing is the only change they see. */
+      const phonePitches = short ? PITCHES : PITCHES_WIDE;
+      const phoneBearing = short ? OVERVIEW_BEARING : PHONE_OVERVIEW_BEARING;
+      const zoomMax = short ? OVERVIEW.zoom : PHONE_ZOOM_MAX;
+      outerN: for (const pitch of phonePitches) {
+        for (let zoom = zoomMax; zoom >= ZOOM_FLOOR; zoom -= 0.05) {
           let center: [number, number] = centroid;
           let ok = false;
           for (let pass = 0; pass < PASSES; pass++) {
-            map.jumpTo({ center, zoom, pitch, bearing: OVERVIEW.bearing });
+            map.jumpTo({ center, zoom, pitch, bearing: phoneBearing });
             /* v8 V8-207: phones carry PILLS now — fit their real rects, not
                the old ±12 dot boxes. */
             const rs = stops.map((st) => labelRect(map.project(st.coordinates), st));
@@ -867,7 +917,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
             center = [c.lng, c.lat];
           }
           if (!ok) continue;
-          map.jumpTo({ center, zoom, pitch, bearing: OVERVIEW.bearing });
+          map.jumpTo({ center, zoom, pitch, bearing: phoneBearing });
           const rs = stops.map((st) => labelRect(map.project(st.coordinates), st));
           const inside = rs.every((r) => r.x0 >= safe.x0 && r.y0 >= safe.y0 && r.x1 <= safe.x1 && r.y1 <= safe.y1);
           let apart = true;
@@ -881,7 +931,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
             const by = (Math.min(...rs.map((r) => r.y0)) + Math.max(...rs.map((r) => r.y1))) / 2;
             const centred =
               Math.abs(bx - (safe.x0 + safe.x1) / 2) <= CENTRE_TOL && Math.abs(by - (safe.y0 + safe.y1) / 2) <= CENTRE_TOL;
-            const cam = { center, zoom: +zoom.toFixed(2), pitch, bearing: OVERVIEW.bearing };
+            const cam = { center, zoom: +zoom.toFixed(2), pitch, bearing: phoneBearing };
             if (!fitOnly) fitOnly = cam;
             if (centred) {
               chosen = cam;
@@ -892,6 +942,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
       }
       chosen = chosen ?? fitOnly;
     } else {
+      const wideBearing = w >= 1280 ? DESKTOP_OVERVIEW_BEARING : OVERVIEW_BEARING;
       outer: for (const pitch of PITCHES_WIDE) {
         /* v11 item 9 (Wil, 8/22): "I'd like the map on the Map page pushed
            higher so the ferry pin sits farther from the `TAKE THE WALK`
@@ -908,15 +959,34 @@ export default function TroyMap({ stops, baseUrl }: Props) {
           /* +E: an explicit padding REPLACES the map's own, so the strip under
              the toolbar has to be re-added here or the fit would frame into it. */
           padding: { top: 120 + mapT(), bottom: 240 + mapE(), left: 140, right: 140 },
-          bearing: OVERVIEW.bearing,
+          bearing: wideBearing,
           pitch,
         } as Parameters<MapboxGL.Map["cameraForBounds"]>[1]);
         if (!cam) continue;
+        /* 21 Oct 2026 (Wil): "2nd Street's long leg should be vertical and run
+           through the middle of TAKE THE WALK". The door is centred, and the
+           map's principal point is the canvas's horizontal centre (its padding
+           is top/bottom only), so the frame slides sideways until that point
+           sits ON the leg: the centre is moved to its foot on the line, in
+           Mercator (conformal, so perpendicular on the ground is horizontal on
+           screen at this bearing). With OVERVIEW_BEARING equal to the leg's
+           heading, the leg then projects as one vertical line at x = w/2.
+           (An asymmetric left/right padding cannot do this: mapbox-gl 3.27's
+           cameraForBounds averages the two sides before fitting.) The label
+           test below still decides the zoom and pitch at this centre. */
+        {
+          const [a0, a1] = SECOND_ST.map((ll) => gl.MercatorCoordinate.fromLngLat(ll));
+          const c = gl.MercatorCoordinate.fromLngLat(cam.center as [number, number]);
+          const vx = a1.x - a0.x, vy = a1.y - a0.y;
+          const k = ((c.x - a0.x) * vx + (c.y - a0.y) * vy) / (vx * vx + vy * vy);
+          const foot = new gl.MercatorCoordinate(a0.x + k * vx, a0.y + k * vy).toLngLat();
+          cam.center = [foot.lng, foot.lat];
+        }
         const baseZoom = Math.min(cam.zoom as number, 15.6);
         for (const dz of [0, 0.25, 0.5, 0.75, 1.0]) {
           const zoom = baseZoom - dz;
           if (zoom < 14.2) break;
-          map.jumpTo({ center: cam.center as [number, number], zoom, pitch, bearing: OVERVIEW.bearing });
+          map.jumpTo({ center: cam.center as [number, number], zoom, pitch, bearing: wideBearing });
           const rects = stops.map((st) => labelRect(map.project(st.coordinates), st));
           const inside = rects.every((r) => r.x0 >= safe.x0 && r.y0 >= safe.y0 && r.x1 <= safe.x1 && r.y1 <= safe.y1);
           let apart = true;
@@ -926,7 +996,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
               if (Math.min(a.x1, c.x1) - Math.max(a.x0, c.x0) > 0 && Math.min(a.y1, c.y1) - Math.max(a.y0, c.y0) > 0) { apart = false; break; }
             }
           if (inside && apart) {
-            chosen = { center: cam.center as [number, number], zoom, pitch, bearing: OVERVIEW.bearing };
+            chosen = { center: cam.center as [number, number], zoom, pitch, bearing: wideBearing };
             break outer;
           }
         }
@@ -945,7 +1015,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
       const fit = map.cameraForBounds(b, {
         /* +E, for the same reason as the fit above. */
         padding: { top: inset + 56 + mapT(), bottom: insetB + 76 + mapE(), left: inset + 24, right: inset + 24 },
-        bearing: OVERVIEW.bearing,
+        bearing: OVERVIEW_BEARING,
         pitch: PITCHES[PITCHES.length - 1],
       } as Parameters<MapboxGL.Map["cameraForBounds"]>[1]);
       if (fit)
@@ -953,11 +1023,11 @@ export default function TroyMap({ stops, baseUrl }: Props) {
           center: fit.center as [number, number],
           zoom: Math.min(fit.zoom as number, OVERVIEW.zoom),
           pitch: PITCHES[PITCHES.length - 1],
-          bearing: OVERVIEW.bearing,
+          bearing: OVERVIEW_BEARING,
         };
     }
     map.jumpTo(saved);
-    const cam = chosen ?? lastResort ?? { ...OVERVIEW, pitch: PITCHES[PITCHES.length - 1] };
+    const cam = chosen ?? lastResort ?? { ...OVERVIEW, pitch: PITCHES[PITCHES.length - 1], bearing: OVERVIEW_BEARING };
     camCache.current = { key, cam };
     return cam;
   }, [stops]);
@@ -1154,7 +1224,7 @@ export default function TroyMap({ stops, baseUrl }: Props) {
       center: OVERVIEW.center,
       zoom: reduced ? OVERVIEW.zoom : 13.75,
       pitch: reduced ? OVERVIEW.pitch : 0,
-      bearing: reduced ? OVERVIEW.bearing : 0,
+      bearing: reduced ? OVERVIEW_BEARING : 0,
       maxBounds: MAX_BOUNDS,
       /* Juror P1-2: the full attribution line ran under the experience doors
          at 768. Compact mode keeps the licence a tap away without sharing
